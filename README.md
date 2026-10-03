@@ -29,11 +29,11 @@ Native (fastest iteration loop):
 cargo run --release
 ```
 
-Web (produces a static site in `web/`):
+Web (produces a static site in `docs/`):
 
 ```sh
 ./scripts/build-web.sh
-python3 -m http.server --directory web 8080
+python3 -m http.server --directory docs 8080
 # open http://localhost:8080
 ```
 
@@ -43,7 +43,8 @@ python3 -m http.server --directory web 8080
   textures, player movement/collision, and the render loop.
 - `assets/images/` — a curated set of renders pulled from a ray tracer
   project's examples, resized/recompressed for the web.
-- `web/` — the static site: `index.html`, the vendored (and hand-patched,
+- `docs/` — the static site: `index.html`, the vendored (and hand-patched,
   see comments in the file) macroquad JS glue, the built `.wasm` binary, and
-  a copy of `assets/`. This is what's published to GitHub Pages.
-- `scripts/build-web.sh` — rebuilds the wasm binary and refreshes `web/`.
+  a copy of `assets/`. This is what's published to GitHub Pages (from
+  `main`, `/docs`).
+- `scripts/build-web.sh` — rebuilds the wasm binary and refreshes `docs/`.

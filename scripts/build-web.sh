@@ -8,9 +8,9 @@ rustup target add wasm32-unknown-unknown >/dev/null 2>&1 || true
 
 cargo build --release --target wasm32-unknown-unknown
 
-cp target/wasm32-unknown-unknown/release/gallery3d.wasm web/gallery3d.wasm
-rm -rf web/assets
-cp -R assets web/assets
+cp target/wasm32-unknown-unknown/release/gallery3d.wasm docs/gallery3d.wasm
+rm -rf docs/assets
+cp -R assets docs/assets
 
-echo "Static site assembled in web/. Serve it with, e.g.:"
-echo "  python3 -m http.server --directory web 8080"
+echo "Static site assembled in docs/ (served by GitHub Pages). Preview it with:"
+echo "  python3 -m http.server --directory docs 8080"
