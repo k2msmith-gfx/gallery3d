@@ -22,6 +22,10 @@ const LEVEL_LENGTH: f32 = ROOM_WIDTH * NUM_ROOMS as f32;
 const DOOR_Z_MIN: f32 = ROOM_DEPTH / 2.0 - 1.3;
 const DOOR_Z_MAX: f32 = ROOM_DEPTH / 2.0 + 1.3;
 const WALL_THICKNESS_COLLIDE: f32 = 0.22;
+// Dividing walls get a separate, differently-colored face per adjoining
+// room; nudging each face slightly into its own room keeps the two from
+// being perfectly coplanar (which would otherwise z-fight).
+const DIVIDER_EPS: f32 = 0.01;
 
 const EYE_HEIGHT: f32 = 1.65;
 const MOVE_SPEED: f32 = 4.2;
@@ -170,18 +174,27 @@ fn build_flat_quad(
 // Procedural textures (no external files needed besides gallery photos)
 // ---------------------------------------------------------------------
 
-fn make_wall_texture() -> Texture2D {
+/// Each room gets its own accent wall color, like a gallery that repaints
+/// its walls between exhibits.
+fn room_color(room: usize) -> Color {
+    match room % 3 {
+        0 => Color::new(0.80, 0.60, 0.54, 1.0), // warm terracotta
+        1 => Color::new(0.56, 0.67, 0.78, 1.0), // cool slate blue
+        _ => Color::new(0.60, 0.74, 0.58, 1.0), // sage green
+    }
+}
+
+fn make_wall_texture(tint: Color) -> Texture2D {
     let size = 128u16;
-    let mut img = Image::gen_image_color(size, size, Color::new(0.86, 0.84, 0.80, 1.0));
+    let mut img = Image::gen_image_color(size, size, tint);
     for y in 0..size {
         for x in 0..size {
             let n = ((x as f32 * 12.9898 + y as f32 * 78.233).sin() * 43758.5453).fract().abs();
             let shade = 0.96 + n * 0.06;
-            let base = Color::new(0.86, 0.84, 0.80, 1.0);
             img.set_pixel(
                 x as u32,
                 y as u32,
-                Color::new(base.r * shade, base.g * shade, base.b * shade, 1.0),
+                Color::new(tint.r * shade, tint.g * shade, tint.b * shade, 1.0),
             );
         }
     }
@@ -244,7 +257,7 @@ struct Painting {
 }
 
 struct Level {
-    opaque_meshes: Vec<Mesh>,  // walls/floor/ceiling (one shared texture each)
+    opaque_meshes: Vec<Mesh>,  // one mesh per room's walls, plus one floor and one ceiling mesh
     painting_meshes: Vec<Mesh>, // one mesh per painting (own texture)
     fixtures: Vec<(Vec3, f32, Color)>, // light fixture visuals: pos, radius, color
 }
@@ -260,12 +273,9 @@ fn room_center_x(room: usize) -> f32 {
 }
 
 fn build_level(paintings: &[Painting; 9], lighting: &Lighting) -> Level {
-    let wall_tex = make_wall_texture();
     let floor_tex = make_floor_texture();
     let ceiling_tex = make_ceiling_texture();
 
-    let mut wall_v = Vec::new();
-    let mut wall_i = Vec::new();
     let mut floor_v = Vec::new();
     let mut floor_i = Vec::new();
     let mut ceiling_v = Vec::new();
@@ -299,147 +309,164 @@ fn build_level(paintings: &[Painting; 9], lighting: &Lighting) -> Level {
         lighting,
     );
 
-    // Long outer walls at z=0 and z=ROOM_DEPTH, running the full length.
-    build_quad(
-        &mut wall_v,
-        &mut wall_i,
-        vec3(0.0, 0.0, 0.0),
-        vec3(LEVEL_LENGTH, 0.0, 0.0),
-        vec3(0.0, ROOM_HEIGHT, 0.0),
-        vec3(0.0, 0.0, 1.0),
-        (24, 4),
-        wall_color,
-        lighting,
-    );
-    build_quad(
-        &mut wall_v,
-        &mut wall_i,
-        vec3(LEVEL_LENGTH, 0.0, ROOM_DEPTH),
-        vec3(-LEVEL_LENGTH, 0.0, 0.0),
-        vec3(0.0, ROOM_HEIGHT, 0.0),
-        vec3(0.0, 0.0, -1.0),
-        (24, 4),
-        wall_color,
-        lighting,
-    );
+    // Walls are built per room so each room can have its own wall color.
+    // Outer walls (z=0, z=ROOM_DEPTH, and the two end caps) are split into
+    // each room's x segment; dividing walls between rooms contribute one
+    // face (with a doorway gap) to each of the two rooms they separate.
+    let mut opaque_meshes = Vec::new();
+    for room in 0..NUM_ROOMS {
+        let mut wv = Vec::new();
+        let mut wi = Vec::new();
+        let x0 = ROOM_WIDTH * room as f32;
+        let x1 = ROOM_WIDTH * (room + 1) as f32;
 
-    // End caps (x=0 and x=LEVEL_LENGTH).
-    build_quad(
-        &mut wall_v,
-        &mut wall_i,
-        vec3(0.0, 0.0, ROOM_DEPTH),
-        vec3(0.0, 0.0, -ROOM_DEPTH),
-        vec3(0.0, ROOM_HEIGHT, 0.0),
-        vec3(1.0, 0.0, 0.0),
-        (10, 4),
-        wall_color,
-        lighting,
-    );
-    build_quad(
-        &mut wall_v,
-        &mut wall_i,
-        vec3(LEVEL_LENGTH, 0.0, 0.0),
-        vec3(0.0, 0.0, ROOM_DEPTH),
-        vec3(0.0, ROOM_HEIGHT, 0.0),
-        vec3(-1.0, 0.0, 0.0),
-        (10, 4),
-        wall_color,
-        lighting,
-    );
+        // South wall (z=0).
+        build_quad(
+            &mut wv,
+            &mut wi,
+            vec3(x0, 0.0, 0.0),
+            vec3(x1 - x0, 0.0, 0.0),
+            vec3(0.0, ROOM_HEIGHT, 0.0),
+            vec3(0.0, 0.0, 1.0),
+            (8, 4),
+            wall_color,
+            lighting,
+        );
+        // North wall (z=ROOM_DEPTH), the one paintings hang on.
+        build_quad(
+            &mut wv,
+            &mut wi,
+            vec3(x1, 0.0, ROOM_DEPTH),
+            vec3(x0 - x1, 0.0, 0.0),
+            vec3(0.0, ROOM_HEIGHT, 0.0),
+            vec3(0.0, 0.0, -1.0),
+            (8, 4),
+            wall_color,
+            lighting,
+        );
 
-    // Dividing walls between rooms, each with a doorway gap.
-    for room in 0..NUM_ROOMS - 1 {
-        let x = ROOM_WIDTH * (room + 1) as f32;
-        // Segment before the doorway (z: 0..DOOR_Z_MIN)
-        build_quad(
-            &mut wall_v,
-            &mut wall_i,
-            vec3(x, 0.0, 0.0),
-            vec3(0.0, 0.0, DOOR_Z_MIN),
-            vec3(0.0, ROOM_HEIGHT, 0.0),
-            vec3(-1.0, 0.0, 0.0),
-            (4, 4),
-            wall_color,
-            lighting,
-        );
-        // Segment after the doorway (z: DOOR_Z_MAX..ROOM_DEPTH)
-        build_quad(
-            &mut wall_v,
-            &mut wall_i,
-            vec3(x, 0.0, DOOR_Z_MAX),
-            vec3(0.0, 0.0, ROOM_DEPTH - DOOR_Z_MAX),
-            vec3(0.0, ROOM_HEIGHT, 0.0),
-            vec3(-1.0, 0.0, 0.0),
-            (4, 4),
-            wall_color,
-            lighting,
-        );
-        // Lintel above the doorway.
-        build_quad(
-            &mut wall_v,
-            &mut wall_i,
-            vec3(x, ROOM_HEIGHT * 0.75, DOOR_Z_MIN),
-            vec3(0.0, 0.0, DOOR_Z_MAX - DOOR_Z_MIN),
-            vec3(0.0, ROOM_HEIGHT * 0.25, 0.0),
-            vec3(-1.0, 0.0, 0.0),
-            (2, 1),
-            wall_color,
-            lighting,
-        );
-        // Mirror faces on the other side of the same plane (so it reads as
-        // a solid wall from both rooms).
-        build_quad(
-            &mut wall_v,
-            &mut wall_i,
-            vec3(x, 0.0, DOOR_Z_MIN),
-            vec3(0.0, 0.0, -DOOR_Z_MIN),
-            vec3(0.0, ROOM_HEIGHT, 0.0),
-            vec3(1.0, 0.0, 0.0),
-            (4, 4),
-            wall_color,
-            lighting,
-        );
-        build_quad(
-            &mut wall_v,
-            &mut wall_i,
-            vec3(x, 0.0, ROOM_DEPTH),
-            vec3(0.0, 0.0, DOOR_Z_MAX - ROOM_DEPTH),
-            vec3(0.0, ROOM_HEIGHT, 0.0),
-            vec3(1.0, 0.0, 0.0),
-            (4, 4),
-            wall_color,
-            lighting,
-        );
-        build_quad(
-            &mut wall_v,
-            &mut wall_i,
-            vec3(x, ROOM_HEIGHT * 0.75, DOOR_Z_MAX),
-            vec3(0.0, 0.0, DOOR_Z_MIN - DOOR_Z_MAX),
-            vec3(0.0, ROOM_HEIGHT * 0.25, 0.0),
-            vec3(1.0, 0.0, 0.0),
-            (2, 1),
-            wall_color,
-            lighting,
-        );
+        // End caps for the first/last room.
+        if room == 0 {
+            build_quad(
+                &mut wv,
+                &mut wi,
+                vec3(0.0, 0.0, ROOM_DEPTH),
+                vec3(0.0, 0.0, -ROOM_DEPTH),
+                vec3(0.0, ROOM_HEIGHT, 0.0),
+                vec3(1.0, 0.0, 0.0),
+                (10, 4),
+                wall_color,
+                lighting,
+            );
+        }
+        if room == NUM_ROOMS - 1 {
+            build_quad(
+                &mut wv,
+                &mut wi,
+                vec3(LEVEL_LENGTH, 0.0, 0.0),
+                vec3(0.0, 0.0, ROOM_DEPTH),
+                vec3(0.0, ROOM_HEIGHT, 0.0),
+                vec3(-1.0, 0.0, 0.0),
+                (10, 4),
+                wall_color,
+                lighting,
+            );
+        }
+
+        // Dividing wall on this room's far side (shared with room+1): the
+        // face normal points back into this room.
+        if room < NUM_ROOMS - 1 {
+            let x = x1 - DIVIDER_EPS;
+            build_quad(
+                &mut wv,
+                &mut wi,
+                vec3(x, 0.0, 0.0),
+                vec3(0.0, 0.0, DOOR_Z_MIN),
+                vec3(0.0, ROOM_HEIGHT, 0.0),
+                vec3(-1.0, 0.0, 0.0),
+                (4, 4),
+                wall_color,
+                lighting,
+            );
+            build_quad(
+                &mut wv,
+                &mut wi,
+                vec3(x, 0.0, DOOR_Z_MAX),
+                vec3(0.0, 0.0, ROOM_DEPTH - DOOR_Z_MAX),
+                vec3(0.0, ROOM_HEIGHT, 0.0),
+                vec3(-1.0, 0.0, 0.0),
+                (4, 4),
+                wall_color,
+                lighting,
+            );
+            build_quad(
+                &mut wv,
+                &mut wi,
+                vec3(x, ROOM_HEIGHT * 0.75, DOOR_Z_MIN),
+                vec3(0.0, 0.0, DOOR_Z_MAX - DOOR_Z_MIN),
+                vec3(0.0, ROOM_HEIGHT * 0.25, 0.0),
+                vec3(-1.0, 0.0, 0.0),
+                (2, 1),
+                wall_color,
+                lighting,
+            );
+        }
+        // Dividing wall on this room's near side (shared with room-1): the
+        // face normal points back into this room.
+        if room > 0 {
+            let x = x0 + DIVIDER_EPS;
+            build_quad(
+                &mut wv,
+                &mut wi,
+                vec3(x, 0.0, DOOR_Z_MIN),
+                vec3(0.0, 0.0, -DOOR_Z_MIN),
+                vec3(0.0, ROOM_HEIGHT, 0.0),
+                vec3(1.0, 0.0, 0.0),
+                (4, 4),
+                wall_color,
+                lighting,
+            );
+            build_quad(
+                &mut wv,
+                &mut wi,
+                vec3(x, 0.0, ROOM_DEPTH),
+                vec3(0.0, 0.0, DOOR_Z_MAX - ROOM_DEPTH),
+                vec3(0.0, ROOM_HEIGHT, 0.0),
+                vec3(1.0, 0.0, 0.0),
+                (4, 4),
+                wall_color,
+                lighting,
+            );
+            build_quad(
+                &mut wv,
+                &mut wi,
+                vec3(x, ROOM_HEIGHT * 0.75, DOOR_Z_MAX),
+                vec3(0.0, 0.0, DOOR_Z_MIN - DOOR_Z_MAX),
+                vec3(0.0, ROOM_HEIGHT * 0.25, 0.0),
+                vec3(1.0, 0.0, 0.0),
+                (2, 1),
+                wall_color,
+                lighting,
+            );
+        }
+
+        opaque_meshes.push(Mesh {
+            vertices: wv,
+            indices: wi,
+            texture: Some(make_wall_texture(room_color(room))),
+        });
     }
 
-    let opaque_meshes = vec![
-        Mesh {
-            vertices: wall_v,
-            indices: wall_i,
-            texture: Some(wall_tex),
-        },
-        Mesh {
-            vertices: floor_v,
-            indices: floor_i,
-            texture: Some(floor_tex),
-        },
-        Mesh {
-            vertices: ceiling_v,
-            indices: ceiling_i,
-            texture: Some(ceiling_tex),
-        },
-    ];
+    opaque_meshes.push(Mesh {
+        vertices: floor_v,
+        indices: floor_i,
+        texture: Some(floor_tex),
+    });
+    opaque_meshes.push(Mesh {
+        vertices: ceiling_v,
+        indices: ceiling_i,
+        texture: Some(ceiling_tex),
+    });
 
     // Paintings: 3 per room, mounted on the far wall (z = ROOM_DEPTH),
     // facing back into the room (-z normal).
@@ -607,6 +634,66 @@ impl Player {
 }
 
 // ---------------------------------------------------------------------
+// HUD
+// ---------------------------------------------------------------------
+
+/// A small instructions label (title + a key-cap diagram of the arrow
+/// keys) drawn in screen space over the 3D view.
+fn draw_controls_label() {
+    let panel_x = 12.0;
+    let panel_y = 12.0;
+    let panel_w = 250.0;
+    let panel_h = 96.0;
+
+    draw_rectangle(
+        panel_x,
+        panel_y,
+        panel_w,
+        panel_h,
+        Color::new(0.0, 0.0, 0.0, 0.55),
+    );
+    draw_rectangle_lines(
+        panel_x,
+        panel_y,
+        panel_w,
+        panel_h,
+        2.0,
+        Color::new(1.0, 1.0, 1.0, 0.25),
+    );
+
+    draw_text("GALLERY3D", panel_x + 14.0, panel_y + 26.0, 22.0, WHITE);
+    draw_text(
+        "move / turn",
+        panel_x + 14.0,
+        panel_y + 48.0,
+        16.0,
+        Color::new(1.0, 1.0, 1.0, 0.7),
+    );
+
+    let key_size = 24.0;
+    let draw_key = |x: f32, y: f32, glyph: &str| {
+        draw_rectangle(x, y, key_size, key_size, Color::new(1.0, 1.0, 1.0, 0.15));
+        draw_rectangle_lines(x, y, key_size, key_size, 1.5, Color::new(1.0, 1.0, 1.0, 0.65));
+        let dims = measure_text(glyph, None, 18, 1.0);
+        draw_text(
+            glyph,
+            x + (key_size - dims.width) / 2.0,
+            y + key_size - 6.0,
+            18.0,
+            WHITE,
+        );
+    };
+
+    // Arrow-key cluster: Up above, Left/Down/Right in a row below.
+    let cluster_x = panel_x + panel_w - 96.0;
+    let cluster_y = panel_y + 36.0;
+    draw_key(cluster_x + 26.0, cluster_y, "^");
+    draw_key(cluster_x, cluster_y + 26.0, "<");
+    draw_key(cluster_x + 26.0, cluster_y + 26.0, "v");
+    draw_key(cluster_x + 52.0, cluster_y + 26.0, ">");
+}
+
+// ---------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------
 
@@ -647,9 +734,12 @@ async fn main() {
     let lighting = build_lighting();
     let level = build_level(&paintings, &lighting);
 
+    // Spawn in the middle of the first room, facing the paintings on the
+    // far wall, so the player starts inside the gallery rather than
+    // staring at the nearest blank wall.
     let mut player = Player {
-        pos: vec3(room_center_x(0), 0.0, ROOM_DEPTH / 2.0 - 2.5),
-        yaw: 0.0,
+        pos: vec3(room_center_x(0), 0.0, ROOM_DEPTH / 2.0),
+        yaw: std::f32::consts::PI,
     };
 
     loop {
@@ -694,17 +784,12 @@ async fn main() {
 
         set_default_camera();
 
-        draw_text(
-            "Gallery3D  —  Arrow keys: Up/Down move, Left/Right turn",
-            16.0,
-            24.0,
-            24.0,
-            WHITE,
-        );
+        draw_controls_label();
+
         draw_text(
             &format!("FPS: {}", get_fps()),
             16.0,
-            48.0,
+            128.0,
             20.0,
             Color::new(1.0, 1.0, 1.0, 0.6),
         );
