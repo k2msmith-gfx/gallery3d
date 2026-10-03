@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <title>Gallery3D — a macroquad first-person demo</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      background: #0a0a0d;
+      overflow: hidden;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    #glcanvas {
+      display: block;
+      width: 100vw;
+      height: 100vh;
+      background: black;
+    }
+    #loading {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      color: #e8e6df;
+      background: #0a0a0d;
+      z-index: 10;
+      transition: opacity 0.4s ease;
+    }
+    #loading h1 {
+      font-weight: 500;
+      letter-spacing: 0.02em;
+      margin-bottom: 0.4em;
+    }
+    #loading p {
+      opacity: 0.6;
+      font-size: 0.95em;
+    }
+    .hidden {
+      opacity: 0;
+      pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="glcanvas" tabindex="1"></canvas>
+  <div id="loading">
+    <h1>Gallery3D</h1>
+    <p>Loading gallery&hellip;</p>
+  </div>
+
+  <script src="mq_js_bundle.js"></script>
+  <script>
+    load("gallery3d.wasm");
+
+    // `canvas` is already declared as a global by mq_js_bundle.js above.
+    const loading = document.getElementById("loading");
+    canvas.addEventListener("click", () => canvas.focus());
+
+    // Macroquad doesn't expose a "ready" callback, so just fade the
+    // loading overlay once the first animation frame has had a chance
+    // to run (asset fetches resolve quickly for a demo this size).
+    const hideLoading = () => loading.classList.add("hidden");
+    setTimeout(hideLoading, 900);
+  </script>
+</body>
+</html>
