@@ -11,6 +11,8 @@ paintings under simulated gallery spotlights.
 
 - **Up / Down** — walk forward / backward
 - **Left / Right** — turn
+- On touch devices, on-screen buttons in the bottom corners do the same
+  (forward/back on the left, turn on the right).
 
 ## How it's rendered
 

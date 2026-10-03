@@ -694,6 +694,120 @@ fn draw_controls_label() {
 }
 
 // ---------------------------------------------------------------------
+// Touch controls (mobile) — also usable with a held mouse click, which is
+// handy for testing without a touchscreen.
+// ---------------------------------------------------------------------
+
+struct TouchButton {
+    x: f32,
+    y: f32,
+    size: f32,
+    glyph: &'static str,
+}
+
+impl TouchButton {
+    fn contains(&self, px: f32, py: f32) -> bool {
+        px >= self.x && px <= self.x + self.size && py >= self.y && py <= self.y + self.size
+    }
+}
+
+struct TouchControls {
+    forward: TouchButton,
+    back: TouchButton,
+    left: TouchButton,
+    right: TouchButton,
+}
+
+/// Lays out two virtual pads sized for a fingertip: forward/back at
+/// bottom-left, turn left/right at bottom-right. Recomputed every frame
+/// since the canvas can resize (e.g. a phone rotating).
+fn layout_touch_controls() -> TouchControls {
+    let sw = screen_width();
+    let sh = screen_height();
+    let size = (sw * 0.12).clamp(48.0, 72.0);
+    let gap = size * 0.18;
+    let margin = size * 0.5;
+
+    let move_cx = margin + size * 0.5;
+    let move_top = sh - margin - size * 2.0 - gap;
+    let forward = TouchButton {
+        x: move_cx - size / 2.0,
+        y: move_top,
+        size,
+        glyph: "^",
+    };
+    let back = TouchButton {
+        x: move_cx - size / 2.0,
+        y: move_top + size + gap,
+        size,
+        glyph: "v",
+    };
+
+    let turn_y = sh - margin - size;
+    let right = TouchButton {
+        x: sw - margin - size,
+        y: turn_y,
+        size,
+        glyph: ">",
+    };
+    let left = TouchButton {
+        x: right.x - size - gap,
+        y: turn_y,
+        size,
+        glyph: "<",
+    };
+
+    TouchControls {
+        forward,
+        back,
+        left,
+        right,
+    }
+}
+
+/// Every currently-pressed pointer: active touches, plus a held left mouse
+/// button (so the same buttons work for a quick test with a mouse).
+fn active_pointers() -> Vec<(f32, f32)> {
+    let mut points: Vec<(f32, f32)> = touches()
+        .iter()
+        .filter(|t| !matches!(t.phase, TouchPhase::Ended | TouchPhase::Cancelled))
+        .map(|t| (t.position.x, t.position.y))
+        .collect();
+    if is_mouse_button_down(MouseButton::Left) {
+        let (mx, my) = mouse_position();
+        points.push((mx, my));
+    }
+    points
+}
+
+fn draw_touch_button(btn: &TouchButton, active: bool) {
+    let bg = if active {
+        Color::new(1.0, 1.0, 1.0, 0.38)
+    } else {
+        Color::new(1.0, 1.0, 1.0, 0.14)
+    };
+    draw_rectangle(btn.x, btn.y, btn.size, btn.size, bg);
+    draw_rectangle_lines(btn.x, btn.y, btn.size, btn.size, 2.0, Color::new(1.0, 1.0, 1.0, 0.5));
+
+    let font_size = (btn.size * 0.5) as u16;
+    let dims = measure_text(btn.glyph, None, font_size, 1.0);
+    draw_text(
+        btn.glyph,
+        btn.x + (btn.size - dims.width) / 2.0,
+        btn.y + btn.size / 2.0 + dims.height / 2.0,
+        font_size as f32,
+        WHITE,
+    );
+}
+
+fn draw_touch_controls(touch: &TouchControls, forward: bool, back: bool, left: bool, right: bool) {
+    draw_touch_button(&touch.forward, forward);
+    draw_touch_button(&touch.back, back);
+    draw_touch_button(&touch.left, left);
+    draw_touch_button(&touch.right, right);
+}
+
+// ---------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------
 
@@ -745,17 +859,24 @@ async fn main() {
     loop {
         let dt = get_frame_time();
 
-        if is_key_down(KeyCode::Left) {
+        let touch_controls = layout_touch_controls();
+        let pointers = active_pointers();
+        let touch_forward = pointers.iter().any(|&(x, y)| touch_controls.forward.contains(x, y));
+        let touch_back = pointers.iter().any(|&(x, y)| touch_controls.back.contains(x, y));
+        let touch_left = pointers.iter().any(|&(x, y)| touch_controls.left.contains(x, y));
+        let touch_right = pointers.iter().any(|&(x, y)| touch_controls.right.contains(x, y));
+
+        if is_key_down(KeyCode::Left) || touch_left {
             player.yaw -= TURN_SPEED * dt;
         }
-        if is_key_down(KeyCode::Right) {
+        if is_key_down(KeyCode::Right) || touch_right {
             player.yaw += TURN_SPEED * dt;
         }
         let forward = vec3(player.yaw.sin(), 0.0, -player.yaw.cos());
-        if is_key_down(KeyCode::Up) {
+        if is_key_down(KeyCode::Up) || touch_forward {
             player.try_move(forward * MOVE_SPEED * dt);
         }
-        if is_key_down(KeyCode::Down) {
+        if is_key_down(KeyCode::Down) || touch_back {
             player.try_move(-forward * MOVE_SPEED * dt);
         }
 
@@ -785,6 +906,7 @@ async fn main() {
         set_default_camera();
 
         draw_controls_label();
+        draw_touch_controls(&touch_controls, touch_forward, touch_back, touch_left, touch_right);
 
         draw_text(
             &format!("FPS: {}", get_fps()),
